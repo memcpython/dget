@@ -1,9 +1,9 @@
-CC=gcc
-CFLAGS=-O2 -Wall
-LIBS=-lcurl
+CC = gcc
+CFLAGS = -Wall -Wextra -O2
+LDFLAGS = -lcurl
 
 all:
-	$(CC) src/dget.c -o dget $(LIBS)
+	$(CC) $(CFLAGS) src/dget.c -o dget $(LDFLAGS)
 
 clean:
 	rm -f dget
