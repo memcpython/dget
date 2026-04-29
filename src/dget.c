@@ -1,9 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <curl/curl.h>
-#include <sys/stat.h>
 
 #define JSMN_STATIC
 #include "jsmn.h"
@@ -28,7 +26,10 @@ static int download(const char *url, const char *path)
     if (!c) return 1;
 
     FILE *f = fopen(path, "wb");
-    if (!f) return 1;
+    if (!f) {
+        curl_easy_cleanup(c);
+        return 1;
+    }
 
     curl_easy_setopt(c, CURLOPT_URL, url);
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, write_cb);
@@ -50,12 +51,23 @@ static char *read_file(const char *path)
 
     fseek(f, 0, SEEK_END);
     long s = ftell(f);
+    if (s < 0) {
+        fclose(f);
+        return NULL;
+    }
     rewind(f);
 
     char *b = malloc(s + 1);
-    if (!b) return NULL;
+    if (!b) {
+        fclose(f);
+        return NULL;
+    }
 
-    fread(b, 1, s, f);
+    if (fread(b, 1, s, f) != (size_t)s) {
+        free(b);
+        fclose(f);
+        return NULL;
+    }
     b[s] = 0;
 
     fclose(f);
@@ -102,7 +114,8 @@ static int install_manifest(const char *file)
 
     for (int i = 1; i < r; i++) {
         if (t[i].type == JSMN_STRING) {
-            if (!strncmp(json + t[i].start, "files", t[i].end - t[i].start)) {
+            if (t[i].end - t[i].start == 5 &&
+                !memcmp(json + t[i].start, "files", 5)) {
                 fidx = i + 1;
                 break;
             }
@@ -119,16 +132,18 @@ static int install_manifest(const char *file)
         char url[512] = {0};
         char out[256] = {0};
 
-        int end = i + t[i].size * 2;
+        int end = i + 1 + t[i].size * 2;
 
-        for (int j = i + 1; j < end && j < r; j++) {
+        for (int j = i + 1; j < end && j + 1 < r; j += 2) {
             if (t[j].type != JSMN_STRING)
-                continue;
+                break;
 
-            if (!strncmp(json + t[j].start, "url", t[j].end - t[j].start))
+            if (t[j].end - t[j].start == 3 &&
+                !memcmp(json + t[j].start, "url", 3))
                 json_copy(url, sizeof(url), json, &t[j + 1]);
 
-            if (!strncmp(json + t[j].start, "output", t[j].end - t[j].start))
+            if (t[j].end - t[j].start == 6 &&
+                !memcmp(json + t[j].start, "output", 6))
                 json_copy(out, sizeof(out), json, &t[j + 1]);
         }
 
@@ -152,18 +167,27 @@ static int fetch_url(const char *url)
     return download(url, name);
 }
 
+static int usage(void)
+{
+    fprintf(stderr, "usage: dget <url>\n       dget install <manifest.json>\n");
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2)
-        return 1;
+        return usage();
 
     if (!strcmp(argv[1], "--version")) {
         printf("dget %s\n", DGET_VERSION);
         return 0;
     }
 
-    if (!strcmp(argv[1], "install"))
+    if (!strcmp(argv[1], "install")) {
+        if (argc < 3)
+            return usage();
         return install_manifest(argv[2]);
+    }
 
     return fetch_url(argv[1]);
 }
